@@ -1,0 +1,53 @@
+MAX SHARPE RATIO (MSR) PORTFOLIO
+Expected Annual Return: 9.48%
+Annual Volatility: 35.68%
+Sharpe Ratio (Annualized): -0.5698
+
+Optimal Weights:
+       Weight
+AEP      0.0%
+DFSVX    0.0%
+DFLVX    0.0%
+FSAGX  100.0%
+
+--------------------------------------------------
+MINIMUM VOLATILITY (MV) PORTFOLIO
+Expected Annual Return: 10.42%
+Annual Volatility: 15.19%
+Sharpe Ratio (Annualized): -1.2765
+
+Optimal Weights:
+       Weight
+AEP    46.13%
+DFSVX   9.24%
+DFLVX  34.72%
+FSAGX    9.9%
+
+
+
+--------------------------------------------------
+EQUAL WEIGHT PORTFOLIO
+Expected Annual Return: 10.86%
+Annual Volatility: 16.80%
+Sharpe Ratio (Annualized): -1.1283
+
+Optimal Weights:
+      Weight
+AEP    25.0%
+DFSVX  25.0%
+DFLVX  25.0%
+FSAGX  25.0%
+
+
+--------------------------------------------------
+RISK PARITY PORTFOLIO
+Expected Annual Return: 10.76%
+Annual Volatility: 15.80%
+Sharpe Ratio (Annualized): -1.2054
+
+Optimal Weights:
+       Weight
+AEP    33.55%
+DFSVX  22.48%
+DFLVX  25.64%
+FSAGX  18.33%
