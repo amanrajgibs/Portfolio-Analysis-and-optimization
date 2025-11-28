@@ -1,0 +1,58 @@
+The next step is to implement the Risk Parity portfolio. This involves defining an objective function to ensure equal risk contribution from each asset, setting constraints, and then using a numerical optimizer to find the optimal weights. The calculate_risk_contribution function will be used as part of the objective function.
+
+def calculate_risk_contribution(weights, cov_matrix):
+    # Calculate portfolio volatility
+    port_volatility = np.sqrt(np.dot(weights.T, np.dot(cov_matrix, weights)))
+    # Calculate marginal risk contribution (MRC)
+    mrc = np.dot(cov_matrix, weights)
+    # Calculate component risk contribution (CRC)
+    crc = weights * mrc / port_volatility
+    return crc
+
+def risk_parity_objective(weights, cov_matrix):
+    # Calculate component risk contributions (CRC)
+    crc = calculate_risk_contribution(weights, cov_matrix)
+    # The objective is to minimize the sum of squared differences between each asset's CRC and the average CRC
+    # This forces the CRC of each asset to be as close as possible to the average, thus equalizing them.
+    num_assets = len(weights)
+    target_risk_contribution = np.sum(crc) / num_assets # This is 1/num_assets times portfolio volatility
+    # Minimize the sum of squared differences from the target risk contribution
+    # Note: A common alternative is to minimize the standard deviation of CRCs or the sum of (CRC - average_CRC)^2
+    # We want each CRC to be equal, so let's minimize the sum of squared differences from the mean CRC
+    return np.sum((crc - target_risk_contribution)**2)
+
+# Constraints for the optimization
+num_assets_rp = len(ASSET_NAMES)
+initial_weights_rp = np.array([1/num_assets_rp] * num_assets_rp)
+bounds_rp = tuple((0, 1) for _ in range(num_assets_rp))
+constraints_rp = ({'type': 'eq', 'fun': lambda weights: np.sum(weights) - 1})
+
+# Run the optimization
+risk_parity_optimization = minimize(
+    risk_parity_objective,
+    initial_weights_rp,
+    args=(cov_matrix_annual),
+    method='SLSQP',
+    bounds=bounds_rp,
+    constraints=constraints_rp,
+    options={'disp': False}
+)
+
+rp_weights = risk_parity_optimization.x
+rp_return, rp_volatility, rp_sharpe = portfolio_performance(
+    rp_weights, mean_returns_annual, cov_matrix_annual, rf_rate_annual
+)
+
+print("\n" + "-"*50)
+print("RISK PARITY PORTFOLIO")
+print(f"Expected Annual Return: {rp_return * 100:.2f}%")
+print(f"Annual Volatility: {rp_volatility * 100:.2f}%")
+print(f"Sharpe Ratio (Annualized): {rp_sharpe:.4f}")
+print("\nOptimal Weights:")
+rp_weights_df = pd.DataFrame(rp_weights, index=ASSET_NAMES, columns=['Weight'])
+print((rp_weights_df * 100).round(2).astype(str) + '%')
+
+print("\nComponent Risk Contributions (CRC) for Risk Parity Portfolio:")
+actual_crc = calculate_risk_contribution(rp_weights, cov_matrix_annual)
+actual_crc_df = pd.DataFrame(actual_crc, index=ASSET_NAMES, columns=['CRC'])
+print((actual_crc_df * 100).round(2).astype(str) + '%')
