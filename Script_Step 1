@@ -1,0 +1,282 @@
+Step 1: Performed Portfolio optimization, got the MSR/MV with the best return.
+
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+import matplotlib.ticker as mtick
+from scipy.optimize import minimize
+import os
+
+# ==============================================================================
+# 1. Data Loading and Preparation
+# ==============================================================================
+
+# --- IMPORTANT: Upload your file to your Colab environment before running ---
+FILE_NAME = "Dataset for Proj ECON 337.xlsx"
+
+try:
+    # Load the data, setting 'Date' as the index. Using read_excel for .xlsx file.
+    df = pd.read_excel(FILE_NAME, parse_dates=['Date'], index_col='Date')
+except FileNotFoundError:
+    print(f"Error: The file '{FILE_NAME}' was not found.")
+    print("Please make sure you have uploaded the file to your Colab environment or run the code in the same directory.")
+    exit()
+
+print("Columns in the loaded DataFrame:", df.columns.tolist()) # Added this line to print columns
+
+# Identify the relevant columns based on the file snippet
+ADJ_CLOSE_COLS = ['AEP Adjusted', 'DFSVX Adjusted', 'DFLVX Adjusted', 'FSAGX Adjusted']
+RF_RATE_COL = 'GS1 (rf)' # Corrected syntax here
+ASSET_NAMES = [col.split(' ')[0] for col in ADJ_CLOSE_COLS]
+
+# Drop rows with NaN values in the essential columns
+df = df.dropna(subset=ADJ_CLOSE_COLS + [RF_RATE_COL])
+
+# Calculate Simple Monthly Returns from Adjusted Close Prices
+# This is the time series data needed for analysis and optimization.
+returns_df = df[ADJ_CLOSE_COLS].pct_change().dropna()
+returns_df.columns = ASSET_NAMES
+
+# Extract the monthly risk-free rate for the same time period
+rf_rate_df = df[RF_RATE_COL].loc[returns_df.index]
+
+# Annualize the statistics for optimization (Monthly data -> 12 periods)
+ANNUALIZATION_FACTOR = 12
+
+# Calculate annualized mean returns
+mean_returns_annual = returns_df.mean() * ANNUALIZATION_FACTOR
+# Calculate annualized covariance matrix
+cov_matrix_annual = returns_df.cov() * ANNUALIZATION_FACTOR
+# Annualize the mean risk-free rate
+rf_rate_annual = rf_rate_df.mean() * ANNUALIZATION_FACTOR
+
+
+# ==============================================================================
+# 2. Portfolio Optimization Functions
+# ==============================================================================
+
+def portfolio_performance(weights, mean_returns, cov_matrix, rf_rate):
+    """Calculates the annualized expected return, volatility, and Sharpe ratio."""
+    weights = np.array(weights)
+    port_return = np.sum(mean_returns * weights)
+    port_volatility = np.sqrt(np.dot(weights.T, np.dot(cov_matrix, weights)))
+    sharpe_ratio = (port_return - rf_rate) / port_volatility
+    return port_return, port_volatility, sharpe_ratio
+
+def minimize_volatility(weights, mean_returns, cov_matrix, rf_rate, *args):
+    """Objective function for minimizing volatility (for a given target return or Min Vol portfolio)."""
+    _, port_volatility, _ = portfolio_performance(weights, mean_returns, cov_matrix, rf_rate)
+    return port_volatility
+
+def max_sharpe_ratio_objective(weights, mean_returns, cov_matrix, rf_rate):
+    """Objective function for maximizing the Sharpe Ratio (by minimizing its negative)."""
+    _, _, sharpe_ratio = portfolio_performance(weights, mean_returns, cov_matrix, rf_rate)
+    return -sharpe_ratio
+
+def get_optimized_weights(objective_function, constraints, bounds, initial_weights):
+    """Generic function to run the optimization using Sequential Least Squares Programming (SLSQP)."""
+    return minimize(
+        objective_function,
+        initial_weights,
+        args=(mean_returns_annual, cov_matrix_annual, rf_rate_annual),
+        method='SLSQP',
+        bounds=bounds,
+        constraints=constraints
+    )
+
+# Define constraints and bounds for optimization
+num_assets = len(ASSET_NAMES)
+initial_weights = np.array([1/num_assets] * num_assets) # Equally weighted start
+bounds = tuple((0, 1) for _ in range(num_assets)) # Weights must be between 0 and 1 (no short selling)
+# Constraint: The sum of all weights must equal 1
+constraints = ({'type': 'eq', 'fun': lambda weights: np.sum(weights) - 1})
+
+
+# ==============================================================================
+# 3. Portfolio Simulation and Optimization
+# ==============================================================================
+
+# 3.1. Simulate Random Portfolios (for visualization of the investment universe)
+NUM_PORTFOLIOS = 10000
+results = np.zeros((3 + num_assets, NUM_PORTFOLIOS)) # Return, Volatility, Sharpe, and then Asset Weights
+
+np.random.seed(42) # for reproducibility
+for i in range(NUM_PORTFOLIOS):
+    weights = np.random.random(num_assets)
+    weights /= np.sum(weights) # Normalize weights
+    port_return, port_volatility, sharpe_ratio = portfolio_performance(
+        weights, mean_returns_annual, cov_matrix_annual, rf_rate_annual
+    )
+    results[0, i] = port_volatility
+    results[1, i] = port_return
+    results[2, i] = sharpe_ratio
+    results[3:, i] = weights
+
+results_df = pd.DataFrame(results.T, columns=['Volatility', 'Return', 'Sharpe_Ratio'] + ASSET_NAMES)
+
+# 3.2. Find Maximum Sharpe Ratio (MSR) Portfolio (The optimal 'risky' portfolio)
+msr_optimization = get_optimized_weights(max_sharpe_ratio_objective, constraints, bounds, initial_weights)
+msr_weights = msr_optimization.x
+msr_return, msr_volatility, msr_sharpe = portfolio_performance(
+    msr_weights, mean_returns_annual, cov_matrix_annual, rf_rate_annual
+)
+
+# 3.3. Find Minimum Volatility (MV) Portfolio (The lowest risk on the Efficient Frontier)
+mv_optimization = get_optimized_weights(minimize_volatility, constraints, bounds, initial_weights)
+mv_weights = mv_optimization.x
+mv_return, mv_volatility, mv_sharpe = portfolio_performance(
+    mv_weights, mean_returns_annual, cov_matrix_annual, rf_rate_annual
+)
+
+# 3.4. Generate Efficient Frontier (The curve of optimal risk-return portfolios)
+target_returns = np.linspace(mv_return, results_df['Return'].max(), 50)
+efficient_frontier_volatilities = []
+
+for target in target_returns:
+    target_constraints = (
+        {'type': 'eq', 'fun': lambda weights: np.sum(weights) - 1}, # Sum of weights = 1
+        {'type': 'eq', 'fun': lambda weights: portfolio_performance(weights, mean_returns_annual, cov_matrix_annual, rf_rate_annual)[0] - target} # Target Return constraint
+    )
+    vol_optimization = minimize(
+        minimize_volatility, initial_weights,
+        args=(mean_returns_annual, cov_matrix_annual, rf_rate_annual),
+        method='SLSQP', bounds=bounds, constraints=target_constraints
+    )
+    efficient_frontier_volatilities.append(vol_optimization.fun)
+
+
+# ==============================================================================
+# 4. Trend Analysis and Time Series Plots
+# ==============================================================================
+
+def calculate_cumulative_returns(returns_df):
+    """Calculates cumulative returns from a series of simple returns."""
+    return (1 + returns_df).cumprod() - 1
+
+def calculate_portfolio_returns(returns_df, weights):
+    """Calculates the time series of monthly returns for a portfolio."""
+    return returns_df.dot(weights)
+
+# Calculate monthly returns for MSR and MV portfolios
+msr_port_returns = calculate_portfolio_returns(returns_df, msr_weights)
+mv_port_returns = calculate_portfolio_returns(returns_df, mv_weights)
+
+# 4.1. Plot Cumulative Returns (Time Series Trend)
+plt.figure(figsize=(12, 6))
+
+# Asset Cumulative Returns
+cum_returns_assets = calculate_cumulative_returns(returns_df)
+for col in cum_returns_assets.columns:
+    plt.plot(cum_returns_assets.index, cum_returns_assets[col], label=f'{col} Asset')
+
+# Portfolio Cumulative Returns
+plt.plot(msr_port_returns.index, calculate_cumulative_returns(msr_port_returns), label='MSR Portfolio', linestyle='--', linewidth=2)
+plt.plot(mv_port_returns.index, calculate_cumulative_returns(mv_port_returns), label='MV Portfolio', linestyle=':', linewidth=2)
+
+plt.title('Cumulative Returns Over Time (Time Series Trend)', fontsize=16)
+plt.xlabel('Date', fontsize=12)
+plt.ylabel('Cumulative Return', fontsize=12)
+plt.gca().yaxis.set_major_formatter(mtick.PercentFormatter(xmax=1.0))
+plt.legend(loc='upper left', fontsize=10)
+plt.grid(True, linestyle='--', alpha=0.6)
+plt.tight_layout()
+plt.savefig('cumulative_returns_trend.png')
+plt.show() # Use plt.show() in Colab to display the image
+
+# 4.2. Plot Rolling Volatility (Trend Analysis)
+ROLLING_WINDOW = 12 # 12 months for annual rolling volatility
+plt.figure(figsize=(12, 6))
+
+# Asset Rolling Volatility
+rolling_vol_assets = returns_df.rolling(window=ROLLING_WINDOW).std() * np.sqrt(ANNUALIZATION_FACTOR)
+for col in rolling_vol_assets.columns:
+    plt.plot(rolling_vol_assets.index, rolling_vol_assets[col], label=f'{col} Asset')
+
+# Portfolio Rolling Volatility
+rolling_vol_msr = msr_port_returns.rolling(window=ROLLING_WINDOW).std() * np.sqrt(ANNUALIZATION_FACTOR)
+rolling_vol_mv = mv_port_returns.rolling(window=ROLLING_WINDOW).std() * np.sqrt(ANNUALIZATION_FACTOR)
+plt.plot(rolling_vol_msr.index, rolling_vol_msr, label='MSR Portfolio', linestyle='--', linewidth=2)
+plt.plot(rolling_vol_mv.index, rolling_vol_mv, label='MV Portfolio', linestyle=':', linewidth=2)
+
+plt.title(f'Rolling Annualized Volatility ({ROLLING_WINDOW} Month Window) (Trend Analysis)', fontsize=16)
+plt.xlabel('Date', fontsize=12)
+plt.ylabel('Annualized Volatility', fontsize=12)
+plt.gca().yaxis.set_major_formatter(mtick.PercentFormatter(xmax=1.0))
+plt.legend(loc='upper left', fontsize=10)
+plt.grid(True, linestyle='--', alpha=0.6)
+plt.tight_layout()
+plt.savefig('rolling_volatility_trend.png')
+plt.show() # Use plt.show() in Colab to display the image
+
+# 4.3. Efficient Frontier Plot (Optimization Visualization)
+plt.figure(figsize=(12, 6))
+
+# 1. Random Portfolios (The investment universe)
+plt.scatter(results_df['Volatility'], results_df['Return'], c=results_df['Sharpe_Ratio'], cmap='viridis', marker='o', s=10, alpha=0.5)
+plt.colorbar(label='Sharpe Ratio')
+# 2. Efficient Frontier (The optimal curve)
+plt.plot(efficient_frontier_volatilities, target_returns, color='red', linestyle='-', linewidth=2, label='Efficient Frontier')
+# 3. MSR Portfolio (Max Sharpe Ratio)
+plt.scatter(msr_volatility, msr_return, marker='*', color='green', s=500, label='Max Sharpe Ratio Portfolio')
+# 4. MV Portfolio (Minimum Volatility)
+plt.scatter(mv_volatility, mv_return, marker='*', color='blue', s=500, label='Minimum Volatility Portfolio')
+# 5. Individual Assets
+for i, asset in enumerate(ASSET_NAMES):
+    asset_vol = cov_matrix_annual.iloc[i, i]**0.5
+    asset_ret = mean_returns_annual[i]
+    plt.scatter(asset_vol, asset_ret, marker='X', color='black', s=200)
+    plt.text(asset_vol * 1.01, asset_ret, asset, fontsize=9)
+
+plt.title('Portfolio Optimization: Efficient Frontier', fontsize=16)
+plt.xlabel('Annualized Volatility (Standard Deviation)', fontsize=12)
+plt.ylabel('Annualized Expected Return', fontsize=12)
+plt.gca().xaxis.set_major_formatter(mtick.PercentFormatter(xmax=1.0))
+plt.gca().yaxis.set_major_formatter(mtick.PercentFormatter(xmax=1.0))
+plt.legend(loc='lower right')
+plt.grid(True, linestyle='--', alpha=0.6)
+plt.tight_layout()
+plt.savefig('efficient_frontier_plot.png')
+plt.show() # Use plt.show() in Colab to display the image
+
+
+# ==============================================================================
+# 5. Output Summary (Print to console)
+# ==============================================================================
+
+print("\n" + "="*50)
+print("PORTFOLIO OPTIMIZATION SUMMARY")
+print("="*50)
+
+# Display individual asset performance
+asset_summary = pd.DataFrame({
+    'Mean Return': mean_returns_annual,
+    'Volatility': [cov_matrix_annual.iloc[i, i]**0.5 for i in range(num_assets)],
+    'Sharpe Ratio': (mean_returns_annual - rf_rate_annual) / [cov_matrix_annual.iloc[i, i]**0.5 for i in range(num_assets)]
+})
+asset_summary.index.name = 'Asset'
+print("\n--- Individual Asset Annualized Performance ---")
+print((asset_summary * 100).round(2).astype(str) + '%')
+
+print("\n" + "-"*50)
+print("MAX SHARPE RATIO (MSR) PORTFOLIO")
+print(f"Expected Annual Return: {msr_return * 100:.2f}%")
+print(f"Annual Volatility: {msr_volatility * 100:.2f}%")
+print(f"Sharpe Ratio (Annualized): {msr_sharpe:.4f}")
+print("\nOptimal Weights:")
+msr_weights_df = pd.DataFrame(msr_weights, index=ASSET_NAMES, columns=['Weight'])
+print((msr_weights_df * 100).round(2).astype(str) + '%')
+
+print("\n" + "-"*50)
+print("MINIMUM VOLATILITY (MV) PORTFOLIO")
+print(f"Expected Annual Return: {mv_return * 100:.2f}%")
+print(f"Annual Volatility: {mv_volatility * 100:.2f}%")
+print(f"Sharpe Ratio (Annualized): {mv_sharpe:.4f}")
+print("\nOptimal Weights:")
+mv_weights_df = pd.DataFrame(mv_weights, index=ASSET_NAMES, columns=['Weight'])
+print((mv_weights_df * 100).round(2).astype(str) + '%')
+
+print("\n" + "="*50)
+print("ANALYSIS COMPLETE")
+print("Three plots have been generated: 'efficient_frontier_plot.png', 'cumulative_returns_trend.png', and 'rolling_volatility_trend.png'.")
+print("Check your file system for the generated images and the console for the summary table.")
+print("="*50)
