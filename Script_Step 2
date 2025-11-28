@@ -1,0 +1,17 @@
+To implement the Equal Weight portfolio, I will first determine the number of assets, then create an array of equal weights, and finally calculate its annualized return, volatility, and Sharpe ratio using the portfolio_performance function and store the results
+
+num_assets_ew = len(ASSET_NAMES)
+ew_weights = np.array([1/num_assets_ew] * num_assets_ew)
+
+ew_return, ew_volatility, ew_sharpe = portfolio_performance(
+    ew_weights, mean_returns_annual, cov_matrix_annual, rf_rate_annual
+)
+
+print("\n" + "-"*50)
+print("EQUAL WEIGHT PORTFOLIO")
+print(f"Expected Annual Return: {ew_return * 100:.2f}%")
+print(f"Annual Volatility: {ew_volatility * 100:.2f}%")
+print(f"Sharpe Ratio (Annualized): {ew_sharpe:.4f}")
+print("\nOptimal Weights:")
+ew_weights_df = pd.DataFrame(ew_weights, index=ASSET_NAMES, columns=['Weight'])
+print((ew_weights_df * 100).round(2).astype(str) + '%')
